@@ -15,7 +15,9 @@ RUN apt-get update && \
     pip install --no-cache-dir \
        paddleocr \
        flask \
-       pillow
+       pillow \
+       requests \
+       paddlepaddle
 
 WORKDIR /app
 COPY server.py /app/
