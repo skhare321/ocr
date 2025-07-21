@@ -1,71 +1,48 @@
-import io, logging
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-from PIL import Image
-from transformers import AutoProcessor, AutoModelForImageTextToText
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("nanonets-ocr-server")
+import os
+from fastapi import FastAPI, UploadFile, File
+import requests
+from tempfile import NamedTemporaryFile
 
 app = FastAPI()
-MODEL_ID = "nanonets/Nanonets-OCR-s"
-
-logger.info(f"Loading processor + model for {MODEL_ID}…")
-# we trust the remote code & opt in to `use_fast=True` here
-processor = AutoProcessor.from_pretrained(
-    MODEL_ID,
-    trust_remote_code=True,
-    use_fast=True
-)
-model = AutoModelForImageTextToText.from_pretrained(
-    MODEL_ID,
-    trust_remote_code=True
-)
-model.eval()
-logger.info("Model loaded.")
-
-@app.get("/ping")
-async def ping():
-    return {"ping": "pong"}
 
 @app.post("/ocr")
-async def ocr_endpoint(
-    file: UploadFile = File(...),
-    prompt: str = File(
-        ...,
-        description=(
-            "Instruction to the model. "
-            "Defaults to: "
-            "\"Extract the text from the above document as if you were reading it naturally. "
-            "Return the tables in html format. Return the equations in LaTeX…\""
-        )
-    )
-):
-
+async def ocr_image(image: UploadFile = File(...)):
+    # Get API key and model ID from environment variables
+    api_key = os.getenv("NANONETS_API_KEY")
+    model_id = os.getenv("NANONETS_MODEL_ID")
+    
+    if not api_key or not model_id:
+        return {"error": "API key or model ID not set"}
+    
+    with NamedTemporaryFile(delete=False) as temp_file:
+        contents = await image.read()
+        temp_file.write(contents)
+        temp_path = temp_file.name
+    
+    url = f"https://app.nanonets.com/api/v2/OCR/Model/{model_id}/LabelFile/"
     try:
-        raw = await file.read()
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        with open(temp_path, "rb") as f:
+            response = requests.post(
+                url,
+                auth=requests.auth.HTTPBasicAuth(api_key, ""),
+                files={"file": f}
+            )
+        os.unlink(temp_path)  # Clean up temp file
+        
+        if response.status_code != 200:
+            return {"error": f"API error: {response.text}"}
+        
+        data = response.json()
+        result = data.get("result", [{}])[0]
+        predictions = result.get("prediction", [])
+        if predictions:
+            key_value = {pred.get("label", "unknown"): pred.get("ocr_text", "") for pred in predictions}
+            return {"extracted_data": key_value}
+        return {"text": result.get("ocr_text", "")}
+    
     except Exception as e:
-        raise HTTPException(400, f"Invalid image: {e}")
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        return {"error": str(e)}
 
-    logger.info(f"Received {file.filename!r} size={img.size} mode={img.mode}")
-
-    try:
-        inputs = processor(
-            images=img,
-            text=prompt,
-            return_tensors="pt",
-        )
-        logger.debug(f"Processor inputs: {inputs.keys()}")
-    except Exception as e:
-        logger.exception("Preprocessing failed")
-        return JSONResponse(500, {"text": None, "error": f"Preprocess error: {e}"})
-
-    try:
-        outputs = model.generate(**inputs, max_new_tokens=4096)
-        text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
-        return {"text": text, "error": None}
-    except Exception as e:
-        logger.exception("OCR failure")
-        return JSONResponse(500, {"text": None, "error": str(e)})
-
+# To run locally: uvicorn app:app --reload
