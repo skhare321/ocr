@@ -12,7 +12,7 @@ ocr = PaddleOCR(
     lang='en',
     use_doc_orientation_classify=True,
     use_doc_unwarping=True,
-    use_textline_orientation=True
+    use_textline_orientation=True,
 )
 
 os.makedirs("output", exist_ok=True)
@@ -57,6 +57,19 @@ def clean_text(text: str) -> str:
             )
     return corrected
 
+def safe_predict(ocr, img_path):
+    try:
+        return ocr.predict(input=img_path)
+    except RuntimeError:
+        # re-initialize and retry
+        ocr = PaddleOCR(
+                lang='en',
+                use_doc_orientation_classify=True,
+                use_doc_unwarping=True,
+                use_textline_orientation=True,
+            )
+        return ocr.predict(input=img_path)
+
 @app.route("/paddleocr", methods=["POST"])
 def paddleocr_endpoint():
     img_file = request.files.get("image")
@@ -70,7 +83,7 @@ def paddleocr_endpoint():
         img_file.save(tmp.name)
         tmp.close()
 
-        results = ocr.predict(input=tmp.name)
+        results = safe_predict(ocr, tmp.name)
         logger.info("Raw OCR results: %s", results)
 
         kv = {}
