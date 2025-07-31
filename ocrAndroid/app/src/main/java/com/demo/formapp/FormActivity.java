@@ -9,11 +9,9 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
-import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
-import android.widget.ProgressBar;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
@@ -22,8 +20,6 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-
-import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -36,45 +32,27 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Calendar;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.logging.Logger;
 
 public class FormActivity extends AppCompatActivity {
 
     private static final int REQUEST_CAMERA = 1;
     private static final int PERM_REQUEST_CODE = 2;
-    private static final String TAG = "FormActivity";
     private ProgressDialog progressDialog;
-    private EditText etDateSubmission, etWeight, etVitALast, formName, havingTravelHistory, iecGiven,
-                        isTreatmentGiven, lmpDate, referralReason;
+    private EditText etDateSubmission, etWeight, etVitALast;
     private Spinner spinnerOedema, spinnerReferral;
     private RadioGroup rgMotherCounseling, rgNightStay, rgAmoxicillinToday, rgVitA1st, rgSugar1st,
             rgAlbendazole7th, rgFolicAcidToday, rgFormulaGiven, rgPotassiumToday, rgMagnesiumToday,
-            rgZincToday, rgMultivitamin;
-
-    private View overlay;
-    private ProgressBar loader;
-    private Map<String, View> viewMap;
+            rgZincToday, rgMultivitamin, rgIron7th;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_form);
-        viewMap = new HashMap<>();
+
         // Initialize fields
         etDateSubmission = findViewById(R.id.et_date_submission);
         etWeight = findViewById(R.id.et_weight);
         etVitALast = findViewById(R.id.et_vit_a_last);
-        formName = findViewById(R.id.form_name);
-        lmpDate = findViewById(R.id.lmp_date);
-
-        isTreatmentGiven = findViewById(R.id.is_treatment_given);
-        iecGiven = findViewById(R.id.iec_given);
-        havingTravelHistory = findViewById(R.id.having_travel_history);
-        referralReason = findViewById(R.id.referral_reason);
-
         spinnerOedema = findViewById(R.id.spinner_oedema);
         spinnerReferral = findViewById(R.id.spinner_referral);
         rgMotherCounseling = findViewById(R.id.rg_mother_counseling);
@@ -89,10 +67,7 @@ public class FormActivity extends AppCompatActivity {
         rgMagnesiumToday = findViewById(R.id.rg_magnesium_today);
         rgZincToday = findViewById(R.id.rg_zinc_today);
         rgMultivitamin = findViewById(R.id.rg_multivitamin);
-//        rgIron7th = findViewById(R.id.rg_iron_7th);
-
-        overlay = findViewById(R.id.overlay);
-        loader  = findViewById(R.id.progress_loader);
+        rgIron7th = findViewById(R.id.rg_iron_7th);
 
         // Setup Spinners
         ArrayAdapter<String> oedemaAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
@@ -152,23 +127,17 @@ public class FormActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_CAMERA && resultCode == RESULT_OK) {
             Bitmap thumbnail = (Bitmap) data.getExtras().get("data");
-
-            File picturesDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-            if (picturesDir == null) {
-                Toast.makeText(this, "Unable to access pictures directory", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            File destination = new File(picturesDir, "temp.jpg");
-
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            thumbnail.compress(Bitmap.CompressFormat.JPEG, 90, bytes);
+            File destination = new File(Environment.getExternalStorageDirectory(), "temp.jpg");
             try (FileOutputStream fo = new FileOutputStream(destination)) {
-                thumbnail.compress(Bitmap.CompressFormat.JPEG, 90, fo);
-                fo.flush();
+                fo.write(bytes.toByteArray());
             } catch (IOException e) {
                 e.printStackTrace();
                 Toast.makeText(this, "Error saving image", Toast.LENGTH_SHORT).show();
                 return;
             }
-            new     UploadAndProcessTask().execute(destination.getAbsolutePath());
+            new UploadAndProcessTask().execute(destination.getAbsolutePath());
         }
     }
 
@@ -185,16 +154,17 @@ public class FormActivity extends AppCompatActivity {
         @Override
         protected String doInBackground(String... params) {
             String filePath = params[0];
-            File imageFile = new File(filePath);
-            Log.d(TAG, "doInBackground: filePath=" + filePath + ", exists=" + imageFile.exists());
-
-            String serverUrl = "http://10.127.130.245:8866/ocr";
+            String serverUrl = "http://10.0.2.2:8000/ocr"; // Replace with your local server URL
             try {
-                String lineEnd    = "\r\n";
+                String lineEnd = "\r\n";
                 String twoHyphens = "--";
-                String boundary   = "*****";
+                String boundary = "*****";
+                int bytesRead, bytesAvailable, bufferSize;
+                byte[] buffer;
+                int maxBufferSize = 1 * 1024 * 1024;
 
-                HttpURLConnection conn = (HttpURLConnection)new URL(serverUrl).openConnection();
+                URL url = new URL(serverUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setDoInput(true);
                 conn.setDoOutput(true);
                 conn.setUseCaches(false);
@@ -204,107 +174,114 @@ public class FormActivity extends AppCompatActivity {
 
                 DataOutputStream dos = new DataOutputStream(conn.getOutputStream());
                 dos.writeBytes(twoHyphens + boundary + lineEnd);
-                dos.writeBytes(
-                        "Content-Disposition: form-data; name=\"image\";filename=\""
-                                + imageFile.getName() + "\"" + lineEnd);
+                dos.writeBytes("Content-Disposition: form-data; name=\"image\";filename=\"" + filePath + "\"" + lineEnd);
                 dos.writeBytes(lineEnd);
 
-                FileInputStream fis = new FileInputStream(imageFile);
-                byte[] buffer = new byte[1024 * 1024];
-                int bytesRead;
-                while ((bytesRead = fis.read(buffer)) != -1) {
-                    dos.write(buffer, 0, bytesRead);
+                FileInputStream fis = new FileInputStream(filePath);
+                bytesAvailable = fis.available();
+                bufferSize = Math.min(bytesAvailable, maxBufferSize);
+                buffer = new byte[bufferSize];
+                bytesRead = fis.read(buffer, 0, bufferSize);
+
+                while (bytesRead > 0) {
+                    dos.write(buffer, 0, bufferSize);
+                    bytesAvailable = fis.available();
+                    bufferSize = Math.min(bytesAvailable, maxBufferSize);
+                    bytesRead = fis.read(buffer, 0, bufferSize);
                 }
-                fis.close();
 
                 dos.writeBytes(lineEnd);
                 dos.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
+
+                fis.close();
                 dos.flush();
                 dos.close();
 
                 int responseCode = conn.getResponseCode();
-                Log.d(TAG, "doInBackground: HTTP response code=" + responseCode);
-
                 if (responseCode == 200) {
-                    BufferedReader reader =
-                            new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                    StringBuilder sb = new StringBuilder();
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                    StringBuilder response = new StringBuilder();
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        sb.append(line);
+                        response.append(line);
                     }
                     reader.close();
-
-                    String jsonResponse = sb.toString();
-                    Log.d(TAG, "doInBackground: raw JSON response=" + jsonResponse);
-                    return jsonResponse;
+                    return response.toString(); // JSON string
                 } else {
-                    Log.e(TAG, "doInBackground: non‑OK response: " + responseCode);
                     return null;
                 }
-
             } catch (Exception e) {
-                Log.e(TAG, "doInBackground: exception uploading image", e);
+                e.printStackTrace();
                 return null;
             }
         }
-        private String normalize(String s) {
-            return s.replaceAll("[\\s_\\-]+", "").toLowerCase();
-        }
-        private Map<String,String> buildJsonKeyMap(JSONObject json) {
-            Map<String,String> keyMap = new HashMap<>();
-            Iterator<String> it = json.keys();
-            while(it.hasNext()) {
-                String orig = it.next();
-                keyMap.put(normalize(orig), orig);
-            }
-            return keyMap;
-        }
-        private void autofillFields(JSONObject json) throws JSONException {
-            Map<String,String> keyMap = buildJsonKeyMap(json);
 
-            for(Map.Entry<String,View> entry : viewMap.entrySet()) {
-                String normKey = entry.getKey();
-                if(!keyMap.containsKey(normKey)) continue;
-
-                String jsonKey = keyMap.get(normKey);
-                String value  = json.optString(jsonKey);
-                View   view   = entry.getValue();
-
-                if(view instanceof EditText) {
-                    ((EditText)view).setText(value);
-
-                } else if(view instanceof Spinner) {
-                    Spinner sp = (Spinner)view;
-                    ArrayAdapter<?> adapter = (ArrayAdapter<?>)sp.getAdapter();
-                    for(int i=0; i<adapter.getCount(); i++) {
-                        if(value.equals(adapter.getItem(i))) {
-                            sp.setSelection(i);
-                            break;
-                        }
-                    }
-
-                } else if(view instanceof RadioGroup) {
-                    setRadioGroup((RadioGroup)view, value);
-                }
-            }
-        }
         @Override
         protected void onPostExecute(String jsonResponse) {
             if (progressDialog != null && progressDialog.isShowing()) {
                 progressDialog.dismiss();
             }
-            if (jsonResponse == null) {
+            if (jsonResponse != null) {
+                try {
+                    JSONObject json = new JSONObject(jsonResponse);
+                    // Fill fields
+                    if (json.has("date_of_submission")) etDateSubmission.setText(json.getString("date_of_submission"));
+                    if (json.has("weight")) etWeight.setText(json.getString("weight"));
+                    if (json.has("vitamin_a_last_given")) etVitALast.setText(json.getString("vitamin_a_last_given"));
+
+                    // Spinners
+                    if (json.has("bilateral_pitting_oedema")) {
+                        String value = json.getString("bilateral_pitting_oedema");
+                        for (int i = 0; i < spinnerOedema.getAdapter().getCount(); i++) {
+                            if (value.equals(spinnerOedema.getAdapter().getItem(i))) {
+                                spinnerOedema.setSelection(i);
+                                break;
+                            }
+                        }
+                    }
+                    if (json.has("higher_facility_referral")) {
+                        String value = json.getString("higher_facility_referral");
+                        for (int i = 0; i < spinnerReferral.getAdapter().getCount(); i++) {
+                            if (value.equals(spinnerReferral.getAdapter().getItem(i))) {
+                                spinnerReferral.setSelection(i);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Radio Groups (example for all)
+                    setRadioGroup(rgMotherCounseling, json.optString("mother_counseling"));
+                    setRadioGroup(rgNightStay, json.optString("night_stay"));
+                    setRadioGroup(rgAmoxicillinToday, json.optString("is_child_given_amoxicillin_today"));
+                    setRadioGroup(rgVitA1st, json.optString("is_child_given_vit_a_on_1st_day"));
+                    setRadioGroup(rgSugar1st, json.optString("is_child_given_sugar_solution_on_1st_day"));
+                    setRadioGroup(rgAlbendazole7th, json.optString("is_child_given_albendazole_on_7th_day"));
+                    setRadioGroup(rgFolicAcidToday, json.optString("is_child_given_folic_acid_today"));
+                    setRadioGroup(rgPotassiumToday, json.optString("is_child_given_potassium_today"));
+                    setRadioGroup(rgMagnesiumToday, json.optString("is_child_given_magnesium_today"));
+                    setRadioGroup(rgZincToday, json.optString("is_child_given_zinc_today"));
+                    setRadioGroup(rgMultivitamin, json.optString("is_child_given_multi_vitamin_syrup"));
+                    setRadioGroup(rgIron7th, json.optString("is_child_given_iron_from_7th_day"));
+
+                    // Special for formula given (not yes/no, but select radio by text)
+                    if (json.has("formula_given")) {
+                        String value = json.getString("formula_given");
+                        for (int i = 0; i < rgFormulaGiven.getChildCount(); i++) {
+                            RadioButton rb = (RadioButton) rgFormulaGiven.getChildAt(i);
+                            if (value.equals(rb.getText().toString())) {
+                                rb.setChecked(true);
+                                break;
+                            }
+                        }
+                    }
+
+                    Toast.makeText(FormActivity.this, "Form filled from OCR", Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Toast.makeText(FormActivity.this, "Error parsing JSON", Toast.LENGTH_SHORT).show();
+                }
+            } else {
                 Toast.makeText(FormActivity.this, "Server error", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            try {
-                JSONObject json = new JSONObject(jsonResponse);
-                autofillFields(json);
-                Toast.makeText(FormActivity.this, "Form filled from OCR", Toast.LENGTH_SHORT).show();
-            } catch (Exception e) {
-                e.printStackTrace();
-                Toast.makeText(FormActivity.this, "Error parsing or filling form", Toast.LENGTH_SHORT).show();
             }
         }
 
