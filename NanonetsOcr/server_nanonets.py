@@ -7,7 +7,6 @@ app = FastAPI()
 
 @app.post("/ocr")
 async def ocr_image(image: UploadFile = File(...)):
-    # Get API key and model ID from environment variables
     api_key = os.getenv("NANONETS_API_KEY")
     model_id = os.getenv("NANONETS_MODEL_ID")
     
@@ -27,7 +26,7 @@ async def ocr_image(image: UploadFile = File(...)):
                 auth=requests.auth.HTTPBasicAuth(api_key, ""),
                 files={"file": f}
             )
-        os.unlink(temp_path)  # Clean up temp file
+        os.unlink(temp_path)
         
         if response.status_code != 200:
             return {"error": f"API error: {response.text}"}
@@ -44,5 +43,3 @@ async def ocr_image(image: UploadFile = File(...)):
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         return {"error": str(e)}
-
-# To run locally: uvicorn app:app --reload
