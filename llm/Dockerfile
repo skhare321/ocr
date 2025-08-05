@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py ./
 
 EXPOSE 5000
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "server:app"]
+CMD ["gunicorn","--bind","0.0.0.0:5000","--timeout","150","server:app"]
